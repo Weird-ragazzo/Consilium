@@ -8,7 +8,7 @@
 
 ## 1. Executive Summary
 
-Consilium is a web application that implements a **multi-model deliberation pipeline** — a structured process where two large language models independently answer a user's question, cross-critique each other's responses, and then revise their answers based on the feedback received. The goal is to produce higher-quality, peer-reviewed AI responses by leveraging adversarial collaboration between models.
+Consilium is a web application that implements a **multi-model deliberation pipeline** — a structured process where two large language models independently answer a user's question, cross-critique each other's responses, and then revise their answers based on the feedback received. The current implementation has been migrated to Groq and expanded into a medical information / decision-support workflow with safety routing, relevant-information extraction, claim-evidence verification, peer review, re-evaluation, and final adjudication.
 
 The name *Consilium* (Latin: "council, deliberation") reflects the core concept — convening a council of AI minds to deliberate before delivering a final answer.
 
@@ -41,35 +41,42 @@ Consilium addresses these by introducing structured peer review between models, 
 └─────────────────┘                   └────────┬────────────┘
                                                │
                                      ┌─────────▼─────────┐
-                                     │  NVIDIA NIM API    │
-                                     │  (OpenAI-compat)   │
+                                     │      GroqCloud     │
+                                     │ (OpenAI-compatible)│
                                      │                    │
-                                     │  • Llama 4 Scout   │
-                                     │  • Llama 3.1 8B    │
+                                     │  • GPT-OSS models  │
+                                     │  • Safety / Vision │
                                      └────────────────────┘
 ```
 
 ### 3.2 Deliberation Pipeline
 
-The core pipeline executes three sequential phases, with parallel model calls within each phase:
+The core pipeline now executes multiple safety-first phases, with parallel model calls where calls are independent:
 
-| Phase | Action | Model A | Model B |
-|-------|--------|---------|---------|
-| **1. Generate** | Both models answer the question independently | Llama 4 Scout answers | Llama 3.1 8B answers |
-| **2. Critique** | Each model critiques the *other's* response | A critiques B's answer | B critiques A's answer |
-| **3. Revise** | Each model revises its *own* answer using the critique it received | A revises using B's critique | B revises using A's critique |
+| Phase | Action | Notes |
+|-------|--------|-------|
+| **1. Safety & Routing** | Safety classifier and router run in parallel | Safety can override routing |
+| **2. Relevant Extraction** | Clinical facts are extracted from the user's prompt | No forced complete patient profile |
+| **3. Generate** | Two analysts answer independently | GPT-OSS 120B + GPT-OSS 20B |
+| **4. Evidence Retrieval** | Claims are extracted and checked against browser-search evidence | Browser search is separate from structured JSON |
+| **5. Critique** | Each model critiques the other's initial analysis | Independent cross-review |
+| **6. Revise** | Each model revises its own answer based on critique | Disagreement is allowed |
+| **7. Adjudicate** | Model 3 synthesizes the verified record | Evidence-first final synthesis |
+| **8. Final Safety Gate** | Last audit for emergency / unsafe output | Emergency guidance is elevated |
 
 All phases use `asyncio.gather()` for parallel execution, minimizing total latency.
 
 ### 3.3 Prompt Engineering
 
-Four distinct system prompts govern model behavior:
+The system now uses the following prompt layers:
 
-- **SYSTEM_PROMPT_GENERATE** — Instructs the model to be a helpful, thorough assistant
-- **SYSTEM_PROMPT_CRITIQUE** — Instructs the model to act as a critical reviewer, following a Strengths / Weaknesses / Suggestions structure
-- **CRITIQUE_USER_TEMPLATE** — Formats the original question + response being critiqued
-- **SYSTEM_PROMPT_REVISE** — Instructs the model to consider the critique and revise if warranted, or explain why no revision is needed
-- **REVISE_USER_TEMPLATE** — Formats the original question + own response + critique received
+- **SAFETY_SYSTEM_PROMPT** — Detects urgent/emergency medical situations and unsafe requests
+- **ROUTER_SYSTEM_PROMPT** — Routes requests into simple, general, medical analysis, urgent, or emergency paths
+- **EXTRACTION_SYSTEM_PROMPT** — Extracts only the relevant provided clinical facts and flags missing/ambiguous/unreadable information
+- **MODEL_1 / MODEL_2 prompts** — Independent clinical analyst and skeptical analyst roles
+- **CLAIM_EXTRACTION / CLAIM_EVALUATION prompts** — Build the claim-evidence matrix from model output and browser-search evidence
+- **MODEL_3 prompt** — Final evidence-first adjudication
+- **FINAL_SAFETY_PROMPT** — Last audit for unsafe or emergency output
 
 ---
 
@@ -81,7 +88,7 @@ Four distinct system prompts govern model behavior:
 |-----------|-----------|---------|
 | Framework | FastAPI 0.115 | Async REST API server |
 | Server | Uvicorn 0.30 | ASGI server with hot-reload |
-| LLM SDK | OpenAI Python SDK 1.50 | NVIDIA NIM API client (OpenAI-compatible) |
+| LLM SDK | Groq Python SDK | Groq API client (OpenAI-compatible) |
 | Config | Pydantic Settings 2.5 | Type-safe environment configuration |
 | HTTP | httpx 0.27 | Async HTTP transport (pinned for compatibility) |
 
@@ -91,7 +98,7 @@ Four distinct system prompts govern model behavior:
 |------|-------------|
 | `main.py` | App initialization, CORS, router mounting |
 | `config.py` | Environment variables & default model configuration |
-| `llm_client.py` | Async wrapper around OpenAI SDK with `<think>` block stripping |
+| `llm_client.py` | Async Groq wrapper with retries, JSON helpers, and browser-search support |
 | `pipeline.py` | Three-phase deliberation orchestration |
 | `prompts.py` | All system prompts and user message templates |
 | `models.py` | Pydantic schemas for request/response validation |
@@ -125,22 +132,21 @@ Four distinct system prompts govern model behavior:
 Request  → { prompt: string }
 Response → {
   prompt: string,
-  model_a: ModelResponse,
-  model_b: ModelResponse,
+  route: string,
+  safety: SafetyClassification,
+  answer: string,
+  assessment: { certainty: string, evidence_quality: string },
+  extracted_information: ExtractedInformation,
+  claims: ClaimMatrixEntry[],
+  sources: Source[],
+  uncertainties: UncertaintyItem[],
+  model_details: Record<string, ModelDeliberationDetail> | null,
+  final_safety: FinalSafetyCheck | null,
   phases_completed: string[]
-}
-
-ModelResponse → {
-  model_name: string,
-  model_id: string,
-  initial_response: string,
-  critique_received: string,
-  final_response: string,
-  was_revised: boolean
 }
 ```
 
-The `was_revised` flag is computed server-side by comparing `initial_response` against `final_response` (stripped whitespace comparison).
+Each `model_details.*.was_revised` flag is computed server-side by comparing the model’s initial analysis against its revised analysis after peer review and evidence verification.
 
 ---
 
@@ -171,21 +177,16 @@ The `was_revised` flag is computed server-side by comparing `initial_response` a
 
 ## 6. Models Used
 
-### Llama 4 Scout 17B (Model A)
+### Model Roles
 
-- **Full ID:** `meta/llama-4-scout-17b-16e-instruct`
-- **Parameters:** 17B active (16 experts, mixture-of-experts)
-- **Role:** Primary responder — larger model with stronger reasoning
-- **Provider:** NVIDIA NIM API
+- **Router** — `openai/gpt-oss-20b`
+- **Safety classifier** — `openai/gpt-oss-safeguard-20b`
+- **Clinical analyst** — `openai/gpt-oss-120b`
+- **Skeptical analyst** — `openai/gpt-oss-20b`
+- **Evidence adjudicator** — `openai/gpt-oss-120b`
+- **Vision / report parsing** — `qwen/qwen3.6-27b`
 
-### Llama 3.1 8B Instruct (Model B)
-
-- **Full ID:** `meta/llama-3.1-8b-instruct`
-- **Parameters:** 8B
-- **Role:** Secondary responder & cross-reviewer — smaller but fast
-- **Provider:** NVIDIA NIM API
-
-The deliberate asymmetry (17B vs 8B) is intentional — it tests whether a smaller model's critique can meaningfully improve a larger model's response, and vice versa.
+The asymmetric pairing between the analyst models is intentional — the stronger model looks for broad clinical possibilities while the smaller model is used as a skeptical counterweight.
 
 ---
 
@@ -195,7 +196,7 @@ The deliberate asymmetry (17B vs 8B) is intentional — it tests whether a small
 
 - Python 3.12+
 - Node.js 18+
-- Two NVIDIA NIM API keys
+- One Groq API key
 
 ### Running
 
@@ -215,10 +216,10 @@ Application runs at `http://localhost:5173` with API proxy to port 8000.
 
 ## 8. Known Limitations (v1.0)
 
-1. **Single blocking request** — the API call blocks for 20-40 seconds while all three phases complete; no streaming or SSE
+1. **Single blocking request** — the API call blocks while all phases complete; no streaming or SSE yet
 2. **No conversation history** — each request is stateless; there is no follow-up capability
 3. **Phase timing is simulated** — the frontend phase stepper uses `setTimeout` heuristics, not real server progress updates
-4. **Two models only** — the pipeline is hardcoded for exactly two participants
+4. **No OCR/upload path yet** — the future image/report flow is scaffolded conceptually but not wired into the UI
 5. **No caching** — identical prompts re-execute the full pipeline every time
 6. **No authentication** — the API is open, suitable for local use only
 
@@ -228,6 +229,7 @@ Application runs at `http://localhost:5173` with API proxy to port 8000.
 
 - **Server-Sent Events (SSE)** for real-time phase progress from the backend
 - **Streaming responses** to display tokens as they arrive
+- **Image/PDF upload path** for report parsing and OCR with the vision model
 - **Configurable model selection** via the frontend UI
 - **N-model council** — extend beyond two participants
 - **Conversation memory** — multi-turn deliberation
@@ -239,4 +241,4 @@ Application runs at `http://localhost:5173` with API proxy to port 8000.
 
 ## 10. Conclusion
 
-Consilium v1.0 demonstrates that structured inter-model deliberation — Generate, Critique, Revise — can be implemented as a lightweight, self-contained web application. The pipeline's cross-review mechanism forces models to confront each other's blind spots, consistently producing revised answers that are more thorough and balanced than their initial responses. The asymmetric model pairing (Llama 4 Scout 17B + Llama 3.1 8B) validates that even smaller models can provide valuable critical feedback to larger ones.
+Consilium v1.0 demonstrates that structured inter-model deliberation — now extended into a Groq-backed medical evidence workflow — can be implemented as a lightweight, self-contained web application. The pipeline's cross-review mechanism forces models to confront each other's blind spots, while the claim-evidence layer and final safety gate keep the output constrained to verifiable, medically cautious guidance.

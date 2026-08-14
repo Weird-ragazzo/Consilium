@@ -2,7 +2,7 @@
 
 **A council of AI models deliberates on your question.**
 
-Consilium pits two LLMs against each other in a structured three-phase deliberation pipeline — Generate, Critique, Revise — to produce higher-quality, peer-reviewed answers to any question.
+Consilium now uses a Groq-backed, safety-first medical deliberation pipeline. It extracts relevant clinical facts, routes requests by risk, runs two independent analysts, verifies claims against retrieved evidence, and returns a structured answer instead of raw model output.
 
 ---
 
@@ -41,10 +41,12 @@ User Question
 
 ## Models
 
-| Role    | Model                                | Provider       |
-|---------|--------------------------------------|----------------|
-| Model A | `meta/llama-4-scout-17b-16e-instruct` | NVIDIA NIM API |
-| Model B | `meta/llama-3.1-8b-instruct`          | NVIDIA NIM API |
+| Role    | Model                        | Provider |
+|---------|------------------------------|----------|
+| Router  | `openai/gpt-oss-20b`         | Groq |
+| Safety  | `openai/gpt-oss-safeguard-20b` | Groq |
+| Analyst | `openai/gpt-oss-120b` / `openai/gpt-oss-20b` | Groq |
+| Evidence / final adjudication | `openai/gpt-oss-120b` | Groq |
 
 ## Tech Stack
 
@@ -52,7 +54,7 @@ User Question
 |----------|-------------------------------------|
 | Backend  | Python 3.12, FastAPI, Uvicorn       |
 | Frontend | React 19, TypeScript, Vite          |
-| LLM API  | NVIDIA NIM (OpenAI-compatible SDK)  |
+| LLM API  | Groq SDK (OpenAI-compatible API)    |
 | Styling  | Custom CSS, Framer Motion           |
 | Fonts    | Instrument Serif, Sora (Google)     |
 
@@ -64,7 +66,7 @@ User Question
 
 - Python 3.12+
 - Node.js 18+
-- Two NVIDIA NIM API keys (free tier available at [build.nvidia.com](https://build.nvidia.com))
+- One Groq API key
 
 ### 1. Clone & set up environment
 
@@ -84,11 +86,17 @@ pip install -r backend/requirements.txt
 cp .env.example .env
 ```
 
-Edit `.env` with your NVIDIA API keys:
+Edit `.env` with your Groq API key and optional model overrides:
 
 ```env
-NVIDIA_API_KEY_LLAMA=nvapi-your-first-key
-NVIDIA_API_KEY_LLAMA2=nvapi-your-second-key
+GROQ_API_KEY=your_key_here
+MODEL_ROUTER=openai/gpt-oss-20b
+MODEL_SAFETY=openai/gpt-oss-safeguard-20b
+MODEL_SIMPLE=openai/gpt-oss-20b
+MODEL_MODEL1=openai/gpt-oss-120b
+MODEL_MODEL2=openai/gpt-oss-20b
+MODEL_MODEL3=openai/gpt-oss-120b
+MODEL_VISION=qwen/qwen3.6-27b
 ```
 
 ### 3. Start the backend
@@ -117,7 +125,7 @@ Consilium/
 ├── backend/
 │   ├── main.py              # FastAPI app entry point
 │   ├── config.py            # Settings & environment variables
-│   ├── llm_client.py        # Async OpenAI-compatible LLM client
+│   ├── llm_client.py        # Async Groq client wrapper with retries and JSON helpers
 │   ├── models.py            # Pydantic request/response schemas
 │   ├── pipeline.py          # 3-phase deliberation pipeline
 │   ├── prompts.py           # System prompts & templates
@@ -158,23 +166,37 @@ Consilium/
 ```json
 {
   "prompt": "Is nuclear energy safe?",
-  "model_a": {
-    "model_name": "Llama 4 Scout",
-    "model_id": "meta/llama-4-scout-17b-16e-instruct",
-    "initial_response": "...",
-    "critique_received": "...",
-    "final_response": "...",
-    "was_revised": true
+  "route": "MEDICAL_ANALYSIS",
+  "safety": {
+    "risk_level": "safe",
+    "route_override": false,
+    "red_flags": [],
+    "reason": "..."
   },
-  "model_b": {
-    "model_name": "Llama 3.1 8B",
-    "model_id": "meta/llama-3.1-8b-instruct",
-    "initial_response": "...",
-    "critique_received": "...",
-    "final_response": "...",
-    "was_revised": true
+  "answer": "...",
+  "assessment": {
+    "certainty": "possible",
+    "evidence_quality": "moderate"
   },
-  "phases_completed": ["generate", "critique", "revise"]
+  "extracted_information": {
+    "symptoms": [],
+    "duration": null,
+    "severity": null,
+    "age": null,
+    "sex": null,
+    "report_values": [],
+    "medications": [],
+    "history": [],
+    "missing_information": [],
+    "ambiguous_information": [],
+    "unreadable_information": []
+  },
+  "claims": [],
+  "sources": [],
+  "uncertainties": [],
+  "model_details": null,
+  "final_safety": null,
+  "phases_completed": ["safety_and_routing", "information_extraction", "dual_model_analysis", "evidence_retrieval", "peer_review", "re_evaluation", "final_claim_matrix", "final_adjudication", "final_safety_gate"]
 }
 ```
 
@@ -190,13 +212,16 @@ All settings are managed via environment variables (loaded from `.env`):
 
 | Variable               | Default                                  | Description              |
 |------------------------|------------------------------------------|--------------------------|
-| `NVIDIA_API_KEY_LLAMA`  | —                                        | API key for Model A      |
-| `NVIDIA_API_KEY_LLAMA2` | —                                        | API key for Model B      |
-| `NVIDIA_BASE_URL`       | `https://integrate.api.nvidia.com/v1`    | NIM API endpoint         |
-| `MODEL_A`               | `meta/llama-4-scout-17b-16e-instruct`    | Model A identifier       |
-| `MODEL_B`               | `meta/llama-3.1-8b-instruct`             | Model B identifier       |
-| `MAX_TOKENS`            | `1024`                                   | Max tokens per LLM call  |
-| `TEMPERATURE`           | `0.7`                                    | Sampling temperature     |
+| `GROQ_API_KEY`          | —                                        | Groq API key             |
+| `MODEL_ROUTER`          | `openai/gpt-oss-20b`                      | Router model             |
+| `MODEL_SAFETY`          | `openai/gpt-oss-safeguard-20b`            | Safety classifier        |
+| `MODEL_SIMPLE`          | `openai/gpt-oss-20b`                      | Simple/general answers   |
+| `MODEL_MODEL1`          | `openai/gpt-oss-120b`                     | Clinical analyst         |
+| `MODEL_MODEL2`          | `openai/gpt-oss-20b`                      | Skeptical analyst        |
+| `MODEL_MODEL3`          | `openai/gpt-oss-120b`                     | Evidence adjudicator     |
+| `MODEL_VISION`          | `qwen/qwen3.6-27b`                        | Future vision/report use |
+| `MAX_TOKENS`            | `2048`                                   | Max tokens per LLM call  |
+| `TEMPERATURE`           | `0.3`                                    | Sampling temperature     |
 
 ---
 

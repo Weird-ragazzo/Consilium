@@ -37,7 +37,7 @@ export function PromptInput({ onSubmit, isLoading }: Props) {
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Pose your question to the council..."
+          placeholder="Describe your symptoms, lab results, or medical question..."
           rows={4}
           disabled={isLoading}
           className="prompt-form__textarea"

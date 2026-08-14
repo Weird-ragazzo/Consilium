@@ -17,22 +17,40 @@ function App() {
   const isLoading = phase !== "idle" && phase !== "done" && phase !== "error";
 
   const handleSubmit = async (prompt: string) => {
-    setPhase("generating");
+    setPhase("safety_and_routing");
     setResult(null);
     setError(null);
 
-    const phaseTimer1 = setTimeout(() => setPhase("critiquing"), 8000);
-    const phaseTimer2 = setTimeout(() => setPhase("revising"), 18000);
+    // Timed progression fallback for smooth user feedback during async backend execution
+    const t1 = setTimeout(() => setPhase("information_extraction"), 1500);
+    const t2 = setTimeout(() => setPhase("dual_model_analysis"), 3500);
+    const t3 = setTimeout(() => setPhase("evidence_retrieval"), 7500);
+    const t4 = setTimeout(() => setPhase("peer_review"), 12500);
+    const t5 = setTimeout(() => setPhase("re_evaluation"), 16500);
+    const t6 = setTimeout(() => setPhase("final_adjudication"), 20500);
+    const t7 = setTimeout(() => setPhase("final_safety_gate"), 24500);
 
     try {
       const response = await runCouncil(prompt);
-      clearTimeout(phaseTimer1);
-      clearTimeout(phaseTimer2);
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+      clearTimeout(t4);
+      clearTimeout(t5);
+      clearTimeout(t6);
+      clearTimeout(t7);
+
       setResult(response);
       setPhase("done");
     } catch (err) {
-      clearTimeout(phaseTimer1);
-      clearTimeout(phaseTimer2);
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+      clearTimeout(t4);
+      clearTimeout(t5);
+      clearTimeout(t6);
+      clearTimeout(t7);
+
       setError(err instanceof Error ? err.message : "Unknown error");
       setPhase("error");
     }
@@ -48,9 +66,11 @@ function App() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.8, ease }}
       >
-        <div className="header__ornament">◆</div>
+        <div className="header__ornament">🩺</div>
         <h1 className="header__title">Consilium</h1>
-        <p className="header__subtitle">The Council of Minds Deliberates</p>
+        <p className="header__subtitle">
+          Evidence-Grounded AI Medical Decision Support Architecture
+        </p>
         <div className="header__line" />
       </motion.header>
 

@@ -1,38 +1,21 @@
-import { motion } from "framer-motion";
+import React from "react";
 import type { CouncilResponse } from "../types";
-import { ResponsePanel } from "./ResponsePanel";
+import { MedicalAssessment } from "./MedicalAssessment";
+import { EvidenceSection } from "./EvidenceSection";
+import { UncertaintySection } from "./UncertaintySection";
+import { DeliberationView } from "./DeliberationView";
 
-interface Props {
+interface CouncilViewProps {
   result: CouncilResponse;
 }
 
-const ease = [0.22, 1, 0.36, 1] as const;
-
-export function CouncilView({ result }: Props) {
+export const CouncilView: React.FC<CouncilViewProps> = ({ result }) => {
   return (
-    <div className="council">
-      <div className="council__divider">
-        <span className="council__divider-diamond">◆</span>
-        <span className="council__divider-text">Council Deliberation</span>
-        <span className="council__divider-diamond">◆</span>
-      </div>
-
-      <div className="council__grid">
-        {[result.model_a, result.model_b].map((model, i) => (
-          <motion.div
-            key={model.model_id}
-            initial={{ opacity: 0, y: 30 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{
-              duration: 0.6,
-              delay: i * 0.15,
-              ease,
-            }}
-          >
-            <ResponsePanel response={model} index={i} />
-          </motion.div>
-        ))}
-      </div>
+    <div className="council-view">
+      <MedicalAssessment result={result} />
+      <EvidenceSection claims={result.claims} sources={result.sources} />
+      <UncertaintySection uncertainties={result.uncertainties} />
+      <DeliberationView modelDetails={result.model_details} />
     </div>
   );
-}
+};

@@ -1,83 +1,70 @@
+import React from "react";
+import { motion } from "framer-motion";
 import type { Phase } from "../types";
 
-interface Props {
+interface PhaseIndicatorProps {
   phase: Phase;
 }
 
-const STEPS = [
-  { key: "generating", label: "Generate", number: "I" },
-  { key: "critiquing", label: "Critique", number: "II" },
-  { key: "revising", label: "Revise", number: "III" },
-] as const;
+const PHASES = [
+  { id: "safety_and_routing", label: "Safety & Router", icon: "🛡️" },
+  { id: "information_extraction", label: "Extract Clinical Data", icon: "📋" },
+  { id: "dual_model_analysis", label: "Parallel Analyst Generation", icon: "⚡" },
+  { id: "evidence_retrieval", label: "Evidence & Search Retrieval", icon: "🔎" },
+  { id: "peer_review", label: "Cross-Model Peer Critique", icon: "⚖️" },
+  { id: "re_evaluation", label: "Re-Evaluation & Revision", icon: "🔄" },
+  { id: "final_adjudication", label: "Model 3 Adjudication", icon: "🩺" },
+  { id: "final_safety_gate", label: "Final Safety Gate Audit", icon: "✅" },
+];
 
-type StepKey = (typeof STEPS)[number]["key"];
-
-function getStepState(
-  stepKey: StepKey,
-  phase: Phase
-): "inactive" | "active" | "complete" {
-  const order: StepKey[] = ["generating", "critiquing", "revising"];
-  const stepIndex = order.indexOf(stepKey);
-  const phaseIndex = order.indexOf(phase as StepKey);
-
-  if (phase === "done") return "complete";
-  if (phase === "error" || phase === "idle") return "inactive";
-  if (stepIndex < phaseIndex) return "complete";
-  if (stepIndex === phaseIndex) return "active";
-  return "inactive";
-}
-
-export function PhaseIndicator({ phase }: Props) {
+export const PhaseIndicator: React.FC<PhaseIndicatorProps> = ({ phase }) => {
   if (phase === "idle") return null;
 
+  const currentIdx = PHASES.findIndex((p) => p.id === phase);
+
   return (
-    <div className="stepper">
-      <div className="stepper__track">
-        {STEPS.map((step, i) => {
-          const state = getStepState(step.key, phase);
+    <div className="phase-indicator-card">
+      <div className="phase-indicator-card__header">
+        <h4 className="phase-indicator-card__title">
+          {phase === "done"
+            ? "✨ Deliberation & Verification Complete"
+            : phase === "error"
+            ? "❌ Deliberation Encountered an Error"
+            : "⏳ Evidence Pipeline Processing..."}
+        </h4>
+      </div>
+
+      <div className="phase-indicator-steps">
+        {PHASES.map((p, idx) => {
+          let statusClass = "pending";
+          if (phase === "done") {
+            statusClass = "completed";
+          } else if (currentIdx !== -1) {
+            if (idx < currentIdx) statusClass = "completed";
+            else if (idx === currentIdx) statusClass = "active";
+          }
+
           return (
-            <div key={step.key} className="stepper__step-wrapper">
-              {i > 0 && (
-                <div
-                  className={`stepper__connector ${
-                    state === "complete" || state === "active"
-                      ? "stepper__connector--filled"
-                      : ""
-                  }`}
-                />
+            <motion.div
+              key={p.id}
+              className={`phase-step phase-step--${statusClass}`}
+              animate={{
+                scale: statusClass === "active" ? 1.03 : 1,
+              }}
+              transition={{ duration: 0.2 }}
+            >
+              <span className="phase-step__icon">{p.icon}</span>
+              <span className="phase-step__label">{p.label}</span>
+              {statusClass === "completed" && (
+                <span className="phase-step__check">✓</span>
               )}
-              <div className={`stepper__step stepper__step--${state}`}>
-                <div className="stepper__circle">
-                  {state === "complete" ? (
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <polyline points="20 6 9 17 4 12" />
-                    </svg>
-                  ) : (
-                    <span className="stepper__number">{step.number}</span>
-                  )}
-                </div>
-                <span className="stepper__label">{step.label}</span>
-              </div>
-            </div>
+              {statusClass === "active" && (
+                <span className="phase-step__spinner" />
+              )}
+            </motion.div>
           );
         })}
       </div>
-
-      {phase === "error" && (
-        <div className="stepper__error">
-          <span className="stepper__error-icon">!</span>
-          An error occurred during deliberation.
-        </div>
-      )}
     </div>
   );
-}
+};

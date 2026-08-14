@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import type { ModelResponse } from "../types";
+import type { ModelDeliberationDetail } from "../types";
 
 interface Props {
-  response: ModelResponse;
+  response: ModelDeliberationDetail;
   index: number;
 }
 
@@ -24,32 +24,15 @@ export function ResponsePanel({ response, index }: Props) {
       <div className="panel__header">
         <h3 className="panel__model-name">{response.model_name}</h3>
         {response.was_revised ? (
-          <span className="panel__badge panel__badge--revised">
-            <svg
-              width="12"
-              height="12"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-            </svg>
-            Revised
-          </span>
+          <span className="panel__badge panel__badge--revised">Revised</span>
         ) : (
-          <span className="panel__badge panel__badge--unchanged">
-            Unchanged
-          </span>
+          <span className="panel__badge panel__badge--unchanged">Unchanged</span>
         )}
       </div>
 
       <div className="panel__section">
-        <h4 className="panel__section-title">Final Response</h4>
-        <div className="panel__content">{response.final_response}</div>
+        <h4 className="panel__section-title">Final Analysis</h4>
+        <div className="panel__content">{response.revised_analysis || response.initial_analysis}</div>
       </div>
 
       <button
@@ -57,19 +40,6 @@ export function ResponsePanel({ response, index }: Props) {
         onClick={() => setShowDetails(!showDetails)}
         aria-expanded={showDetails}
       >
-        <svg
-          className={`panel__toggle-icon ${showDetails ? "panel__toggle-icon--open" : ""}`}
-          width="16"
-          height="16"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <polyline points="6 9 12 15 18 9" />
-        </svg>
         {showDetails ? "Hide" : "View"} deliberation process
       </button>
 
@@ -85,9 +55,9 @@ export function ResponsePanel({ response, index }: Props) {
           >
             <div className="panel__details-inner">
               <div className="panel__detail-block">
-                <h4 className="panel__section-title">Initial Response</h4>
+                <h4 className="panel__section-title">Initial Analysis</h4>
                 <div className="panel__content">
-                  {response.initial_response}
+                  {response.initial_analysis}
                 </div>
               </div>
               <div className="panel__detail-block">
