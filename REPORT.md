@@ -1,244 +1,389 @@
-# Consilium — Project Report (v1.0)
+# Consilium
 
-**Author:** Dhruv Raghav  
-**Date:** February 18, 2026  
-**Version:** 1.0.0  
+**A council of AI models deliberates on your question.**
 
----
+Consilium is a web application that uses multiple AI models to produce structured, evidence-aware responses. Rather than relying on one model’s first answer, its backend routes a request, extracts relevant information, runs independent analyses, reviews claims against available evidence, and applies a final safety check.
 
-## 1. Executive Summary
+The project is built with **FastAPI**, **React**, **TypeScript**, and **Vite**, and uses **Groq** to access language models.
 
-Consilium is a web application that implements a **multi-model deliberation pipeline** — a structured process where two large language models independently answer a user's question, cross-critique each other's responses, and then revise their answers based on the feedback received. The current implementation has been migrated to Groq and expanded into a medical information / decision-support workflow with safety routing, relevant-information extraction, claim-evidence verification, peer review, re-evaluation, and final adjudication.
+> **Important:** Consilium is an experimental AI application, not a medical device or a substitute for professional care. AI-generated information can be incorrect, incomplete, or out of date. Do not use it to diagnose or treat a condition. Consult a qualified healthcare professional for medical advice. For urgent or emergency symptoms, contact local emergency services.
 
-The name *Consilium* (Latin: "council, deliberation") reflects the core concept — convening a council of AI minds to deliberate before delivering a final answer.
+## Contents
 
----
+- [What Consilium does](#what-consilium-does)
+- [How it works](#how-it-works)
+- [Architecture](#architecture)
+- [Technology stack](#technology-stack)
+- [Getting started](#getting-started)
+- [Configuration](#configuration)
+- [Using the API](#using-the-api)
+- [Project structure](#project-structure)
+- [Privacy and security](#privacy-and-security)
+- [Known limitations](#known-limitations)
+- [Troubleshooting](#troubleshooting)
+- [License](#license)
 
-## 2. Problem Statement
+## What Consilium does
 
-Single-model LLM responses often suffer from:
+Consilium accepts a question through a web interface or its API and returns a structured response. Depending on the request and pipeline result, the response can include:
 
-- **Unchecked errors** — factual mistakes go unnoticed without review
-- **Blind spots** — a single model may miss important perspectives or nuances
-- **Overconfidence** — models rarely self-critique effectively
-- **Inconsistency** — quality varies significantly across prompts
+- A safety assessment and route
+- Extracted information and details that may be missing or unclear
+- A final answer and assessment
+- Claims and available sources
+- Uncertainties
+- Model deliberation details
+- The pipeline phases that completed
 
-Consilium addresses these by introducing structured peer review between models, forcing each to defend or improve its reasoning under critique.
+The design goal is to make responses more considered and transparent than a single, unreviewed model output. Using multiple models does **not** guarantee correctness.
 
----
+## How it works
 
-## 3. Architecture
+The backend runs a multi-stage pipeline. Some independent model calls may run in parallel.
 
-### 3.1 System Architecture
+1. **Safety assessment and routing**  
+   A safety classifier and router assess the request. Safety results can affect the route.
 
-```
-┌─────────────────┐       HTTP        ┌─────────────────────┐
-│                 │   POST /api/      │                     │
-│   React/Vite    │ ──────────────▶   │   FastAPI Backend   │
-│   Frontend      │                   │                     │
-│   (port 5173)   │ ◀──────────────   │   (port 8000)       │
-│                 │    JSON Response   │                     │
-└─────────────────┘                   └────────┬────────────┘
-                                               │
-                                     ┌─────────▼─────────┐
-                                     │      GroqCloud     │
-                                     │ (OpenAI-compatible)│
-                                     │                    │
-                                     │  • GPT-OSS models  │
-                                     │  • Safety / Vision │
-                                     └────────────────────┘
-```
+2. **Relevant information extraction**  
+   The system extracts details relevant to the request and identifies information that is missing, ambiguous, or unreadable. It does not assume every request contains a complete patient profile.
 
-### 3.2 Deliberation Pipeline
+3. **Independent analysis**  
+   Two analyst models produce separate responses.
 
-The core pipeline now executes multiple safety-first phases, with parallel model calls where calls are independent:
+4. **Evidence retrieval and claim review**  
+   The pipeline identifies claims and evaluates them against evidence available to the application. Evidence and source availability may vary.
 
-| Phase | Action | Notes |
-|-------|--------|-------|
-| **1. Safety & Routing** | Safety classifier and router run in parallel | Safety can override routing |
-| **2. Relevant Extraction** | Clinical facts are extracted from the user's prompt | No forced complete patient profile |
-| **3. Generate** | Two analysts answer independently | GPT-OSS 120B + GPT-OSS 20B |
-| **4. Evidence Retrieval** | Claims are extracted and checked against browser-search evidence | Browser search is separate from structured JSON |
-| **5. Critique** | Each model critiques the other's initial analysis | Independent cross-review |
-| **6. Revise** | Each model revises its own answer based on critique | Disagreement is allowed |
-| **7. Adjudicate** | Model 3 synthesizes the verified record | Evidence-first final synthesis |
-| **8. Final Safety Gate** | Last audit for emergency / unsafe output | Emergency guidance is elevated |
+5. **Peer review**  
+   The analysts review each other’s initial work.
 
-All phases use `asyncio.gather()` for parallel execution, minimizing total latency.
+6. **Re-evaluation**  
+   The analyses are reconsidered in light of peer review and evidence.
 
-### 3.3 Prompt Engineering
+7. **Final adjudication**  
+   A separate model synthesizes the reviewed information into a structured answer.
 
-The system now uses the following prompt layers:
+8. **Final safety check**  
+   The output receives a final safety review, with urgent guidance elevated when appropriate.
 
-- **SAFETY_SYSTEM_PROMPT** — Detects urgent/emergency medical situations and unsafe requests
-- **ROUTER_SYSTEM_PROMPT** — Routes requests into simple, general, medical analysis, urgent, or emergency paths
-- **EXTRACTION_SYSTEM_PROMPT** — Extracts only the relevant provided clinical facts and flags missing/ambiguous/unreadable information
-- **MODEL_1 / MODEL_2 prompts** — Independent clinical analyst and skeptical analyst roles
-- **CLAIM_EXTRACTION / CLAIM_EVALUATION prompts** — Build the claim-evidence matrix from model output and browser-search evidence
-- **MODEL_3 prompt** — Final evidence-first adjudication
-- **FINAL_SAFETY_PROMPT** — Last audit for unsafe or emergency output
+The API runs this work as a single request; it does not currently provide live server-side progress updates. The frontend displays a simplified phase indicator, which may not correspond to real-time backend progress.
 
----
+## Architecture
 
-## 4. Technical Implementation
-
-### 4.1 Backend
-
-| Component | Technology | Purpose |
-|-----------|-----------|---------|
-| Framework | FastAPI 0.115 | Async REST API server |
-| Server | Uvicorn 0.30 | ASGI server with hot-reload |
-| LLM SDK | Groq Python SDK | Groq API client (OpenAI-compatible) |
-| Config | Pydantic Settings 2.5 | Type-safe environment configuration |
-| HTTP | httpx 0.27 | Async HTTP transport (pinned for compatibility) |
-
-**Key files:**
-
-| File | Responsibility |
-|------|-------------|
-| `main.py` | App initialization, CORS, router mounting |
-| `config.py` | Environment variables & default model configuration |
-| `llm_client.py` | Async Groq wrapper with retries, JSON helpers, and browser-search support |
-| `pipeline.py` | Three-phase deliberation orchestration |
-| `prompts.py` | All system prompts and user message templates |
-| `models.py` | Pydantic schemas for request/response validation |
-| `routers/council.py` | Single POST endpoint at `/api/council` |
-
-### 4.2 Frontend
-
-| Component | Technology | Purpose |
-|-----------|-----------|---------|
-| Framework | React 19 | UI component library |
-| Language | TypeScript 5.9 | Type-safe development |
-| Build | Vite 6.4 | Dev server with API proxy & HMR |
-| Animation | Framer Motion 12 | Entrance animations & accordion transitions |
-| Fonts | Instrument Serif + Sora | Editorial typography via Google Fonts |
-
-**Key components:**
-
-| Component | Responsibility |
-|-----------|-------------|
-| `App.tsx` | Root layout, phase state management, error handling |
-| `PromptInput.tsx` | Textarea form with Ctrl+Enter shortcut, gold gradient submit button |
-| `PhaseIndicator.tsx` | Three-step progress stepper with Roman numerals (I, II, III) |
-| `CouncilView.tsx` | Grid layout with staggered reveal animations |
-| `ResponsePanel.tsx` | Model answer card with expandable deliberation details |
-
-### 4.3 API Contract
-
-**Endpoint:** `POST /api/council`
-
-```
-Request  → { prompt: string }
-Response → {
-  prompt: string,
-  route: string,
-  safety: SafetyClassification,
-  answer: string,
-  assessment: { certainty: string, evidence_quality: string },
-  extracted_information: ExtractedInformation,
-  claims: ClaimMatrixEntry[],
-  sources: Source[],
-  uncertainties: UncertaintyItem[],
-  model_details: Record<string, ModelDeliberationDetail> | null,
-  final_safety: FinalSafetyCheck | null,
-  phases_completed: string[]
-}
+```text
+┌──────────────────────┐       HTTP / JSON       ┌──────────────────────┐
+│                      │  POST /api/council      │                      │
+│  React + TypeScript  │ ──────────────────────▶ │  FastAPI backend     │
+│  Vite frontend       │ ◀────────────────────── │  Pipeline and API    │
+│  localhost:5173      │       JSON response     │  localhost:8000      │
+└──────────────────────┘                         └──────────┬───────────┘
+                                                            │
+                                                            │ model requests
+                                                            ▼
+                                                 ┌────────────────────────┐
+                                                 │ Groq API and configured │
+                                                 │ language models         │
+                                                 └────────────────────────┘
 ```
 
-Each `model_details.*.was_revised` flag is computed server-side by comparing the model’s initial analysis against its revised analysis after peer review and evidence verification.
+- The **frontend** collects the user’s prompt and displays the response.
+- The **backend** validates requests, orchestrates the pipeline, and returns structured JSON.
+- The **model provider** processes model requests using the configured API key.
 
----
+## Technology stack
 
-## 5. Design
+| Area | Technology |
+|---|---|
+| Backend | Python 3.12+, FastAPI, Uvicorn |
+| Frontend | React 19, TypeScript, Vite |
+| Model access | Groq Python SDK |
+| Validation and configuration | Pydantic |
+| HTTP client | HTTPX |
+| UI animation | Framer Motion |
+| Fonts | Instrument Serif and Sora |
 
-### 5.1 Aesthetic Direction
+### Default model roles
 
-**Neo-Classical Editorial** — warm gold on deep obsidian, inspired by luxury editorial print design.
+The model IDs below are defaults and can be overridden with environment variables.
 
-| Element | Choice |
-|---------|--------|
-| Background | Deep obsidian `#08080c` with SVG grain overlay |
-| Accent | Warm gold `#c8a44e` with copper secondary `#a87d5e` |
-| Display Font | Instrument Serif (italic) — distinctive serif with character |
-| Body Font | Sora — geometric sans-serif for readability |
-| Layout | Centered 920px max-width, generous vertical rhythm |
-| Interaction | Framer Motion entrance reveals, pulse animations on active phase |
+| Role | Default model |
+|---|---|
+| Router | `openai/gpt-oss-20b` |
+| Safety classifier | `openai/gpt-oss-safeguard-20b` |
+| Simple/general response | `openai/gpt-oss-20b` |
+| Analyst 1 | `openai/gpt-oss-120b` |
+| Analyst 2 | `openai/gpt-oss-20b` |
+| Final adjudicator | `openai/gpt-oss-120b` |
+| Vision/report use | `qwen/qwen3.6-27b` |
 
-### 5.2 UI Features
+Model availability depends on your Groq account and the provider’s current model offerings.
 
-- **Header** — Italic serif title with diamond ornament and gradient divider
-- **Input** — Serif italic placeholder, gold-gradient CTA button with arrow animation
-- **Phase Stepper** — Horizontal three-step timeline with Roman numerals, pulsing ring on active step, checkmarks on complete
-- **Response Cards** — Top accent line, serif model names, pill badges (Revised/Unchanged), animated accordion for deliberation details
-- **Error States** — Contextual error banners with icon and stepper error indication
+## Getting started
 
----
+### Prerequisites
 
-## 6. Models Used
+Install the following before you begin:
 
-### Model Roles
+- Python 3.12 or later
+- Node.js 18 or later
+- npm
+- A Groq API key
 
-- **Router** — `openai/gpt-oss-20b`
-- **Safety classifier** — `openai/gpt-oss-safeguard-20b`
-- **Clinical analyst** — `openai/gpt-oss-120b`
-- **Skeptical analyst** — `openai/gpt-oss-20b`
-- **Evidence adjudicator** — `openai/gpt-oss-120b`
-- **Vision / report parsing** — `qwen/qwen3.6-27b`
-
-The asymmetric pairing between the analyst models is intentional — the stronger model looks for broad clinical possibilities while the smaller model is used as a skeptical counterweight.
-
----
-
-## 7. Setup & Deployment
-
-### Requirements
-
-- Python 3.12+
-- Node.js 18+
-- One Groq API key
-
-### Running
+### 1. Clone the repository
 
 ```bash
-# Backend (from project root)
-source .venv/bin/activate
-uvicorn backend.main:app --reload --port 8000
+git clone <repo-url>
+cd Consilium
+```
 
-# Frontend (separate terminal)
+Replace `<repo-url>` with the repository’s clone URL.
+
+### 2. Create and activate a Python environment
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+On Windows, activate the environment with:
+
+```powershell
+.venv\Scripts\Activate.ps1
+```
+
+### 3. Install backend dependencies
+
+From the repository root:
+
+```bash
+pip install -r backend/requirements.txt
+```
+
+### 4. Configure environment variables
+
+Create a local `.env` file from the provided template:
+
+```bash
+cp .env.example .env
+```
+
+Open `.env` and replace the placeholder with your Groq API key. Keep this file local; **never commit a real key**.
+
+```env
+GROQ_API_KEY=your_key_here
+
+MODEL_ROUTER=openai/gpt-oss-20b
+MODEL_SAFETY=openai/gpt-oss-safeguard-20b
+MODEL_SIMPLE=openai/gpt-oss-20b
+MODEL_MODEL1=openai/gpt-oss-120b
+MODEL_MODEL2=openai/gpt-oss-20b
+MODEL_MODEL3=openai/gpt-oss-120b
+MODEL_VISION=qwen/qwen3.6-27b
+
+MAX_TOKENS=2048
+TEMPERATURE=0.3
+```
+
+The model and generation settings are optional overrides if the application provides defaults for them. See [Configuration](#configuration).
+
+### 5. Start the backend
+
+From the repository root, with the virtual environment activated:
+
+```bash
+uvicorn backend.main:app --reload --port 8000
+```
+
+The backend should be available at `http://localhost:8000`.
+
+### 6. Start the frontend
+
+Open a second terminal:
+
+```bash
 cd frontend
+npm install
 npm run dev
 ```
 
-Application runs at `http://localhost:5173` with API proxy to port 8000.
+Open the URL printed by Vite—typically [http://localhost:5173](http://localhost:5173).
 
----
+The development server is configured to proxy API requests to the backend. Keep both servers running while using the local application.
 
-## 8. Known Limitations (v1.0)
+## Configuration
 
-1. **Single blocking request** — the API call blocks while all phases complete; no streaming or SSE yet
-2. **No conversation history** — each request is stateless; there is no follow-up capability
-3. **Phase timing is simulated** — the frontend phase stepper uses `setTimeout` heuristics, not real server progress updates
-4. **No OCR/upload path yet** — the future image/report flow is scaffolded conceptually but not wired into the UI
-5. **No caching** — identical prompts re-execute the full pipeline every time
-6. **No authentication** — the API is open, suitable for local use only
+Application settings are managed through environment variables, usually loaded from the root `.env` file.
 
----
+| Variable | Default | Description |
+|---|---|---|
+| `GROQ_API_KEY` | — | Groq API key; required for model requests |
+| `MODEL_ROUTER` | `openai/gpt-oss-20b` | Request-routing model |
+| `MODEL_SAFETY` | `openai/gpt-oss-safeguard-20b` | Safety-classification model |
+| `MODEL_SIMPLE` | `openai/gpt-oss-20b` | Simple/general response model |
+| `MODEL_MODEL1` | `openai/gpt-oss-120b` | First analyst model |
+| `MODEL_MODEL2` | `openai/gpt-oss-20b` | Second analyst model |
+| `MODEL_MODEL3` | `openai/gpt-oss-120b` | Final adjudication model |
+| `MODEL_VISION` | `qwen/qwen3.6-27b` | Vision/report model setting |
+| `MAX_TOKENS` | `2048` | Maximum tokens for a model call |
+| `TEMPERATURE` | `0.3` | Model sampling temperature |
 
-## 9. Future Work (v2.0 Candidates)
+The backend configuration is defined in `backend/config.py`. Check that file for the authoritative list of supported settings and defaults.
 
-- **Server-Sent Events (SSE)** for real-time phase progress from the backend
-- **Streaming responses** to display tokens as they arrive
-- **Image/PDF upload path** for report parsing and OCR with the vision model
-- **Configurable model selection** via the frontend UI
-- **N-model council** — extend beyond two participants
-- **Conversation memory** — multi-turn deliberation
-- **Response quality scoring** — automated evaluation of improvement after revision
-- **Export/share** — save or share deliberation results
-- **Dark/light theme toggle**
+## Using the API
 
----
+### `POST /api/council`
 
-## 10. Conclusion
+Submit a prompt as JSON:
 
-Consilium v1.0 demonstrates that structured inter-model deliberation — now extended into a Groq-backed medical evidence workflow — can be implemented as a lightweight, self-contained web application. The pipeline's cross-review mechanism forces models to confront each other's blind spots, while the claim-evidence layer and final safety gate keep the output constrained to verifiable, medically cautious guidance.
+```http
+POST /api/council
+Content-Type: application/json
+```
+
+```json
+{
+  "prompt": "What questions should I ask my doctor about this diagnosis?"
+}
+```
+
+The response is a JSON object. Its fields include the prompt, route, safety assessment, answer, assessment, extracted information, claims, sources, uncertainties, model details, final safety result, and completed pipeline phases. Some values may be `null` or empty, depending on the request and the pipeline result.
+
+A shortened, illustrative response shape:
+
+```json
+{
+  "prompt": "What questions should I ask my doctor about this diagnosis?",
+  "route": "MEDICAL_ANALYSIS",
+  "safety": {
+    "risk_level": "safe",
+    "route_override": false,
+    "red_flags": [],
+    "reason": "..."
+  },
+  "answer": "...",
+  "assessment": {
+    "certainty": "possible",
+    "evidence_quality": "moderate"
+  },
+  "extracted_information": {},
+  "claims": [],
+  "sources": [],
+  "uncertainties": [],
+  "model_details": null,
+  "final_safety": null,
+  "phases_completed": [
+    "safety_and_routing",
+    "information_extraction",
+    "dual_model_analysis",
+    "evidence_retrieval",
+    "peer_review",
+    "re_evaluation",
+    "final_claim_matrix",
+    "final_adjudication",
+    "final_safety_gate"
+  ]
+}
+```
+
+The example is for illustration; actual values and optional fields depend on the implementation and result.
+
+### `GET /health`
+
+Check whether the backend is responding:
+
+```bash
+curl http://localhost:8000/health
+```
+
+Expected response:
+
+```json
+{
+  "status": "ok"
+}
+```
+
+FastAPI’s interactive API documentation is normally available at [http://localhost:8000/docs](http://localhost:8000/docs) while the backend is running.
+
+## Project structure
+
+```text
+Consilium/
+├── .env.example
+├── REPORT.md
+├── backend/
+│   ├── main.py                 # FastAPI application entry point
+│   ├── config.py               # Settings and environment variables
+│   ├── llm_client.py           # Groq client helpers
+│   ├── models.py               # Request and response schemas
+│   ├── pipeline.py             # Deliberation pipeline orchestration
+│   ├── prompts.py              # System prompts and templates
+│   ├── requirements.txt        # Python dependencies
+│   └── routers/
+│       └── council.py          # Council API endpoint
+└── frontend/
+    ├── index.html
+    ├── package.json
+    ├── vite.config.ts           # Vite configuration and API proxy
+    └── src/
+        ├── App.tsx              # Root component and application state
+        ├── App.css
+        ├── index.css
+        ├── api/
+        │   └── council.ts       # Frontend API client
+        ├── components/
+        │   ├── CouncilView.tsx
+        │   ├── PhaseIndicator.tsx
+        │   ├── PromptInput.tsx
+        │   └── ResponsePanel.tsx
+        └── types/
+            └── index.ts         # TypeScript interfaces
+```
+
+## Privacy and security
+
+- Prompts are sent to Groq for model processing. Review the provider’s current privacy and data-handling terms before using the application with sensitive information.
+- Do not submit personally identifying information or confidential medical records.
+- Keep `.env` out of version control. Never put API keys in frontend code, screenshots, logs, or public issue reports.
+- Before deploying the backend publicly, add appropriate authentication, rate limiting, abuse protection, and production configuration. The current API has no authentication and is intended for local development unless secured separately.
+- Review logging, data retention, and any evidence-retrieval behavior before using the application with real users.
+- A safety classifier and final safety check can reduce risk but cannot guarantee that every unsafe or incorrect response will be detected.
+
+## Known limitations
+
+- **Requests are synchronous:** the API waits for the pipeline to finish; it does not stream the answer.
+- **No conversation history:** requests are stateless; follow-up questions do not automatically include prior context.
+- **Progress is not live:** the frontend phase indicator uses client-side behavior and is not a server-sent progress feed.
+- **No wired image/report upload flow:** a vision model setting may be present, but that does not mean image or PDF upload is available in the UI.
+- **No caching:** repeated prompts may run the pipeline again.
+- **No authentication:** the API does not require a user account by default.
+
+## Troubleshooting
+
+### The backend reports a missing or invalid API key
+
+- Confirm `.env` exists in the expected location.
+- Check that `GROQ_API_KEY` contains a valid key and has no surrounding quotes or accidental spaces.
+- Restart the backend after changing environment variables.
+- Never share the key in terminal screenshots, logs, or public reports.
+
+### The frontend cannot reach the backend
+
+- Confirm the backend is running on port `8000`.
+- Confirm the frontend is running and check the proxy configuration in `frontend/vite.config.ts`.
+- Look at both terminal windows for startup errors.
+
+### A model request fails
+
+- Check that the configured model IDs are available to your Groq account.
+- Verify your API key and provider account status.
+- Inspect the backend terminal for the error details, taking care not to publish sensitive request data.
+
+### Python or Node dependencies fail to install
+
+- Verify your Python and Node.js versions meet the prerequisites.
+- Activate the Python virtual environment before installing or running backend dependencies.
+- Run `npm install` from the `frontend` directory.
+
+## License
+
+**All rights reserved.** No license is currently provided. Unless a license is added, others do not receive permission to use, modify, or redistribute this project. Making the repository public does not change that.

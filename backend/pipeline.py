@@ -506,6 +506,7 @@ Verified FINAL Evidence Matrix:
                 model=settings.model_safety,
                 pydantic_model=FinalSafetyCheck,
                 temperature=0.1,
+                reasoning_effort="low",
             ),
             timeout=FINAL_SAFETY_TIMEOUT_SECONDS,
         )
@@ -519,6 +520,14 @@ Verified FINAL Evidence Matrix:
         final_safety = FinalSafetyCheck(
             risk_level=fallback_level,
             safety_notice="Final safety review timed out; using the earlier safety classification.",
+            must_seek_emergency=fallback_level == "emergency",
+        )
+    except Exception as exc:
+        logger.warning(f"Final safety gate unavailable, using fallback response: {exc}")
+        fallback_level = safety.risk_level if safety.risk_level in ["urgent", "emergency"] else "caution" if safety.risk_level == "caution" else "safe"
+        final_safety = FinalSafetyCheck(
+            risk_level=fallback_level,
+            safety_notice="Final safety review was unavailable; using the earlier safety classification.",
             must_seek_emergency=fallback_level == "emergency",
         )
     except Exception as exc:

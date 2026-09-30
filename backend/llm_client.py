@@ -22,7 +22,7 @@ class GroqLLMClient:
         self.client = AsyncGroq(api_key=api_key)
 
     async def _execute_with_retry(
-        self, kwargs: Dict[str, Any], is_json: bool = False, max_retries: int = 4
+        self, kwargs: Dict[str, Any], is_json: bool = False, max_retries: int = 2
     ) -> Any:
         current_model = kwargs.get("model", "openai/gpt-oss-20b")
         for attempt in range(max_retries):
@@ -31,7 +31,6 @@ class GroqLLMClient:
                 if "reasoning_effort" in kwargs and "gpt-oss" not in current_model:
                     kwargs.pop("reasoning_effort", None)
                 if is_json and "gpt-oss" not in current_model and "response_format" in kwargs:
-                    # For non-gpt-oss models, ensure response_format json_object is handled
                     kwargs["response_format"] = {"type": "json_object"}
                 return await self.client.chat.completions.create(**kwargs)
             except RateLimitError as e:
@@ -43,8 +42,7 @@ class GroqLLMClient:
                     current_model = FALLBACK_MODELS.get(
                         current_model, "llama-3.3-70b-versatile"
                     )
-                # Sleep briefly for TPM reset
-                await asyncio.sleep(1.0 * (attempt + 1))
+                await asyncio.sleep(min(1.0 * (attempt + 1), 2.0))
             except Exception as e:
                 logger.warning(
                     f"API error on {current_model} (attempt {attempt + 1}/{max_retries}): {e}"
